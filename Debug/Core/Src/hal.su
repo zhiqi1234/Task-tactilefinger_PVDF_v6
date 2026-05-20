@@ -1,0 +1,9 @@
+../Core/Src/hal.c:75:6:InitADC	4	static
+../Core/Src/hal.c:111:6:delay_ms	16	static
+../Core/Src/hal.c:132:6:delay_us	16	static
+../Core/Src/hal.c:154:6:setCS	24	static
+../Core/Src/hal.c:184:6:setSYNC_RESET	24	static
+../Core/Src/hal.c:203:6:toggleSYNC	8	static
+../Core/Src/hal.c:227:6:toggleRESET	8	static
+../Core/Src/hal.c:269:6:spiSendReceiveArrays	40	static
+../Core/Src/hal.c:313:9:spiSendReceiveByte	32	static

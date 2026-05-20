@@ -1,0 +1,34 @@
+2024-06-03 20:54:29,014 [INFO] Activator:176 - 
+
+
+2024-06-03 20:54:29,015 [INFO] Activator:177 - !SESSION log4j initialized
+2024-06-03 20:54:32,295 [INFO] LogOutputStream:77 - [STDOUT_REDIRECT] 
+2024-06-03 20:54:53,957 [ERROR] LogOutputStream:75 - [STDERR_REDIRECT] SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+2024-06-03 20:54:53,958 [ERROR] LogOutputStream:75 - [STDERR_REDIRECT] SLF4J: Defaulting to no-operation (NOP) logger implementation
+2024-06-03 20:54:53,959 [ERROR] LogOutputStream:75 - [STDERR_REDIRECT] SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+2024-06-03 20:55:33,422 [INFO] Activator:176 - 
+
+
+2024-06-03 20:55:33,424 [INFO] Activator:177 - !SESSION log4j initialized
+2024-06-03 20:55:36,216 [INFO] LogOutputStream:77 - [STDOUT_REDIRECT] 
+2024-06-03 20:55:57,659 [ERROR] LogOutputStream:75 - [STDERR_REDIRECT] SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+2024-06-03 20:55:57,660 [ERROR] LogOutputStream:75 - [STDERR_REDIRECT] SLF4J: Defaulting to no-operation (NOP) logger implementation
+2024-06-03 20:55:57,661 [ERROR] LogOutputStream:75 - [STDERR_REDIRECT] SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+2024-06-03 20:58:08,685 [INFO] Activator:176 - 
+
+
+2024-06-03 20:58:08,687 [INFO] Activator:177 - !SESSION log4j initialized
+2024-06-03 20:58:12,906 [INFO] LogOutputStream:77 - [STDOUT_REDIRECT] 
+2024-06-03 20:58:34,373 [ERROR] LogOutputStream:75 - [STDERR_REDIRECT] SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+2024-06-03 20:58:34,374 [ERROR] LogOutputStream:75 - [STDERR_REDIRECT] SLF4J: Defaulting to no-operation (NOP) logger implementation
+2024-06-03 20:58:34,376 [ERROR] LogOutputStream:75 - [STDERR_REDIRECT] SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+2024-06-03 20:59:42,208 [INFO] Activator:176 - 
+
+
+2024-06-03 20:59:42,209 [INFO] Activator:177 - !SESSION log4j initialized
+2024-06-03 20:59:45,098 [INFO] LogOutputStream:77 - [STDOUT_REDIRECT] 
+2024-06-03 21:00:18,684 [INFO] Activator:176 - 
+
+
+2024-06-03 21:00:18,686 [INFO] Activator:177 - !SESSION log4j initialized
+2024-06-03 21:00:21,544 [INFO] LogOutputStream:77 - [STDOUT_REDIRECT] 
