@@ -43,6 +43,10 @@
 // Flag to indicate if a /DRDY interrupt has occurred
 static volatile bool flag_nDRDY_INTERRUPT = false;
 
+// Multi-chip support: csConfig[] defined in main.c
+extern ChipSelectConfig csConfig[4];
+static uint8_t currentCSIndex = 0;
+
 
 
 //****************************************************************************
@@ -151,18 +155,28 @@ void delay_us(const uint32_t delay_time_us)
 //! \return None.
 //
 //*****************************************************************************
+void selectChip(uint8_t chipIndex)
+{
+    currentCSIndex = chipIndex;
+}
+
+//*****************************************************************************
+//
+//! Controls the state of the /CS GPIO pin for the currently selected chip.
+//!
+//! \fn void setCS(const bool state)
+//!
+//! \param state boolean indicating which state to set the /CS pin (0=low, 1=high)
+//!
+//! NOTE: Call selectChip() first to choose which chip's CS to control.
+//!
+//! \return None.
+//
+//*****************************************************************************
 void setCS(const bool state)
 {
-    /* --- INSERT YOUR CODE HERE --- */
-
-    // td(CSSC) delay
-//    if(state) { SysCtlDelay(2); }
-
-    uint8_t value = (uint8_t) (state ? nCS_PIN : 0);
-    HAL_GPIO_WritePin(nCS_PORT, nCS_PIN, value);
-
-    // td(SCCS) delay
-//    if(!state) { SysCtlDelay(2); }
+    uint8_t value = (uint8_t) (state ? csConfig[currentCSIndex].GPIO_Pin : 0);
+    HAL_GPIO_WritePin(csConfig[currentCSIndex].GPIO_Port, csConfig[currentCSIndex].GPIO_Pin, value);
 }
 
 

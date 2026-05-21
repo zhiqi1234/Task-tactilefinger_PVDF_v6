@@ -92,8 +92,7 @@
 #define nDRDY_PIN           (DRDY_Pin)
 #define nDRDY_INT           (DRDY_EXTI_IRQn)
 
-#define nCS_PORT            (CS1_GPIO_Port)
-#define nCS_PIN             (CS1_Pin)
+// nCS_PORT/nCS_PIN removed — multi-chip design uses selectChip() + csConfig[] instead
 
 #define nSYNC_nRESET_PORT   (RESET_ADC_GPIO_Port)
 #define nSYNC_nRESET_PIN    (RESET_ADC_Pin)
@@ -113,6 +112,7 @@
 void    InitADC(void);
 void    delay_ms(const uint32_t delay_time_ms);
 void    delay_us(const uint32_t delay_time_us);
+void    selectChip(uint8_t chipIndex);
 void    setCS(const bool state);
 void    setSYNC_RESET(const bool state);
 void    toggleSYNC(void);

@@ -72,6 +72,8 @@ int cnt = 0;
 int test_flag = 0;
 Queue *queues[5]; // 每个芯片�???????????个队�???????????
 
+static uint8_t dma_tx_buffer[transm_data_len];  // DMA persistent send buffer
+
 ChipSelectConfig csConfig[4] = {
     {CS1_GPIO_Port, CS1_Pin},
     {CS2_GPIO_Port, CS2_Pin},
@@ -84,6 +86,7 @@ uint8_t adc_connected[4] = {1,1,1,1};  // 存储每个ADC芯片的连接状�??
 volatile uint8_t data_ready_flag = 0;  // DRDY中断标志位
 volatile uint8_t uart_tx_busy = 0;     // UART DMA传输忙标志位
 int tx_queue_index = 0;                // 当前发送的队列索引
+static uint32_t drdy_watchdog = 0;     // DRDY超时计数器，用于EXTI丢失时的GPIO备份检测
 
 /* USER CODE END PV */
 
@@ -151,6 +154,10 @@ int main(void)
 //	HAL_GPIO_WritePin(CS1_GPIO_Port, CS1_Pin, GPIO_PIN_RESET);  // enable chip 1
 	__HAL_GPIO_EXTI_CLEAR_IT(DRDY_Pin);  // 清除上电期间可能产生的伪中断标志位
 	HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+	// If DRDY is already low (level mode, IRQ enabled after first conversion), trigger first read
+	if (HAL_GPIO_ReadPin(DRDY_GPIO_Port, DRDY_Pin) == GPIO_PIN_RESET)
+		data_ready_flag = 1;
+
 
 
   /* USER CODE END 2 */
@@ -162,65 +169,59 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  // 轮询检查DRDY标志位
-	  if (data_ready_flag == 1)
+		  // 轮询检查DRDY标志位
+	  if (data_ready_flag == 1 || HAL_GPIO_ReadPin(DRDY_GPIO_Port, DRDY_Pin) == GPIO_PIN_RESET)
 	  {
 		  data_ready_flag = 0;  // 清除标志位
 
-		  // 检查DRDY引脚状态
-		  if (HAL_GPIO_ReadPin(DRDY_GPIO_Port, DRDY_Pin) == GPIO_PIN_RESET)
+		  // 依次读取4个ADC芯片的数据
+		  for (int i = 0; i < 4; i++)
 		  {
-			  // 依次读取3个ADC芯片的数据
-			  for (int i = 0; i < 3; i++)
+			  // 拉低CS片选，使能当前ADC芯片
+			  HAL_GPIO_WritePin(csConfig[i].GPIO_Port, csConfig[i].GPIO_Pin, GPIO_PIN_RESET);
+
+			  // 读取27字节数据（3字节状态字 + 24字节通道数据）
+			  HAL_SPI_Receive(&hspi2, receiveData[i], 27, 100);
+
+			  // 检查数据有效性
+			  if (receiveData[i][0] == 0xFF)
 			  {
-				  // 拉低CS片选，使能当前ADC芯片
-				  HAL_GPIO_WritePin(csConfig[i].GPIO_Port, csConfig[i].GPIO_Pin, GPIO_PIN_RESET);
-
-				  // 读取27字节数据（3字节状态字 + 24字节通道数据）
-				  HAL_SPI_Receive(&hspi2, receiveData[i], 27, 100);
-
-				  // 检查数据有效性
-				  if (receiveData[i][0] == 0xFF)
-				  {
-					  memset(receiveData[i], 0, 27);
-				  }
-
-				  // 拉高CS片选，禁用当前ADC芯片
-				  HAL_GPIO_WritePin(csConfig[i].GPIO_Port, csConfig[i].GPIO_Pin, GPIO_PIN_SET);
-
-				  // 组装发送数据帧
-				  transmitData[i][0] = 0xAA;
-				  transmitData[i][1] = 0xAA;
-				  transmitData[i][2] = i;
-
-				  // 跳过前3个字节状态字，复制24字节纯通道数据
-				  memcpy(&transmitData[i][3], &receiveData[i][3], 24);
-
-				  transmitData[i][27] = 0xFF;
-				  transmitData[i][28] = 0xFF;
-
-				  // 入队
-				  enqueue(queues[i], transmitData[i]);
-
-				  cnt++;
-				  if(cnt % 1000 == 0)
-					  HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+				  memset(receiveData[i], 0, 27);
 			  }
+
+			  // 拉高CS片选，禁用当前ADC芯片
+			  HAL_GPIO_WritePin(csConfig[i].GPIO_Port, csConfig[i].GPIO_Pin, GPIO_PIN_SET);
+
+			  // 组装发送数据帧（29字节全通道）
+			  transmitData[i][0] = 0xAA;
+			  transmitData[i][1] = 0xAA;
+			  transmitData[i][2] = i;
+			  memcpy(&transmitData[i][3], &receiveData[i][3], 24);
+			  transmitData[i][27] = 0xFF;
+			  transmitData[i][28] = 0xFF;
+
+			  // 入队
+			  enqueue(queues[i], transmitData[i]);
+
+			  cnt++;
+			  if(cnt % 1000 == 0)
+				  HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 		  }
 	  }
 
 	  // 发送队列中的数据（每次只发一个，等DMA完成后再发下一个）
 	  if (!uart_tx_busy)
 	  {
-		  for (int i = 0; i < 3; i++)
+		  for (int i = 0; i < 4; i++)
 		  {
-			  int idx = (tx_queue_index + i) % 3;
+			  int idx = (tx_queue_index + i) % 4;
 			  if (!isEmpty(queues[idx]))
 			  {
 				  QueueElement item = dequeue(queues[idx]);
+				  memcpy(dma_tx_buffer, item.data, transm_data_len);
 				  uart_tx_busy = 1;
-				  tx_queue_index = (idx + 1) % 3;
-				  HAL_UART_Transmit_DMA(&huart4, item.data, transm_data_len);
+				  tx_queue_index = (idx + 1) % 4;
+				  HAL_UART_Transmit_DMA(&huart4, dma_tx_buffer, transm_data_len);
 				  break;
 			  }
 		  }

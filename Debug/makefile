@@ -60,8 +60,8 @@ all: main-build
 main-build: tactilefinger_PVDF.elf secondary-outputs
 
 # Tool invocations
-tactilefinger_PVDF.elf tactilefinger_PVDF.map: $(OBJS) $(USER_OBJS) D:\JunjieWang\Scientific_research\Task-Visual_tactile_sensor\codes\codes_PiezoTac\LowerCode_PiezoTac_32CH\tactilefinger_PVDF_v6\STM32F103RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "tactilefinger_PVDF.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m3 -T"D:\JunjieWang\Scientific_research\Task-Visual_tactile_sensor\codes\codes_PiezoTac\LowerCode_PiezoTac_32CH\tactilefinger_PVDF_v6\STM32F103RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="tactilefinger_PVDF.map" -Wl,--gc-sections -static --specs=nano.specs -mfloat-abi=soft -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+tactilefinger_PVDF.elf tactilefinger_PVDF.map: $(OBJS) $(USER_OBJS) D:\JunjieWang\Scientific_research\Task-Visual_tactile_sensor\codes\codes_PiezoTac\LowerCode_PiezoTac_32CH\Task-tactilefinger_PVDF_v6\STM32F103RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "tactilefinger_PVDF.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m3 -T"D:\JunjieWang\Scientific_research\Task-Visual_tactile_sensor\codes\codes_PiezoTac\LowerCode_PiezoTac_32CH\Task-tactilefinger_PVDF_v6\STM32F103RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="tactilefinger_PVDF.map" -Wl,--gc-sections -static --specs=nano.specs -mfloat-abi=soft -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

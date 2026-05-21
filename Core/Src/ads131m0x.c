@@ -120,14 +120,17 @@ void adcStartup(void)
     /* (OPTIONAL) Validate first response word when beginning SPI communication: (0xFF20 | CHANCNT) */
 //	uint16_t response = sendCommand(OPCODE_NULL);
 
-	/* (OPTIONAL) Define your initial register settings here */
-    writeSingleRegister(CLOCK_ADDRESS, (CLOCK_DEFAULT & ~CLOCK_OSR_MASK) | CLOCK_OSR_4096);
+	/* Initialize all 4 ADC chips via their individual CS lines */
+	for (int chip = 0; chip < 4; chip++)
+	{
+		selectChip(chip);
 
-    /* (REQUIRED) Configure MODE register settings
-     * NOTE: This function call is required here for this particular code implementation to work.
-     * This function will enforce the MODE register settings as selected in the 'ads131m0x.h' header file.
-     */
-    writeSingleRegister(MODE_ADDRESS, MODE_DEFAULT);
+		/* Define your initial register settings here */
+		writeSingleRegister(CLOCK_ADDRESS, (CLOCK_DEFAULT & ~CLOCK_OSR_MASK) | CLOCK_OSR_16384);
+
+		/* Configure MODE register settings */
+		writeSingleRegister(MODE_ADDRESS, MODE_DEFAULT);
+	}
 
     /* (OPTIONAL) Read back all registers */
 

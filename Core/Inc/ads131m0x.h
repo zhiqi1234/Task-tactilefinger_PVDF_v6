@@ -73,7 +73,8 @@
 //#define WORD_LENGTH_32BIT_ZERO_PADDED
 
 /* Enable this define statement to use the DRDY pulse format... */
-#define DRDY_FMT_PULSE
+//#define DRDY_FMT_PULSE   // Disabled: pulse (~122ns) too short for polling-based main loop.
+                            // Using level mode instead — DRDY stays low until all chips are read.
 
 /* Enable this define statement to use CRC on DIN... */
 //#define ENABLE_CRC_IN
