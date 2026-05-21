@@ -47,6 +47,9 @@ static uint16_t             registerMap[NUM_REGISTERS];
 // Array of SPI word lengths
 const static uint8_t        wlength_byte_values[] = {2, 3, 4, 4};
 
+// Per-chip startup diagnostic data
+AdcDiagInit adc_diag[4];
+
 
 
 //****************************************************************************
@@ -132,7 +135,31 @@ void adcStartup(void)
 		writeSingleRegister(MODE_ADDRESS, MODE_DEFAULT);
 	}
 
+	/* 同步所有 4 颗 ADC 芯片的转换启动时刻 */
+	toggleSYNC();
+
     /* (OPTIONAL) Read back all registers */
+    /* Readback verification: confirm ID/CLOCK/MODE for each chip */
+    {
+        uint16_t expected_clock = (CLOCK_DEFAULT & ~CLOCK_OSR_MASK) | CLOCK_OSR_16384;
+        for (int chip = 0; chip < 4; chip++)
+        {
+            selectChip(chip);
+            adc_diag[chip].id_read    = readSingleRegister(ID_ADDRESS);
+            adc_diag[chip].clock_read = readSingleRegister(CLOCK_ADDRESS);
+            adc_diag[chip].mode_read  = readSingleRegister(MODE_ADDRESS);
+
+            /* Per-field validation for granular diagnosis */
+            adc_diag[chip].id_ok = (adc_diag[chip].id_read != 0x0000 &&
+                                    adc_diag[chip].id_read != 0xFFFF &&
+                                    (adc_diag[chip].id_read & 0xF000) == 0x2000) ? 1 : 0;
+            adc_diag[chip].clock_ok = (adc_diag[chip].clock_read == expected_clock) ? 1 : 0;
+            adc_diag[chip].mode_ok  = (adc_diag[chip].mode_read == MODE_DEFAULT) ? 1 : 0;
+            adc_diag[chip].init_ok = (adc_diag[chip].id_ok &&
+                                      adc_diag[chip].clock_ok &&
+                                      adc_diag[chip].mode_ok) ? 1 : 0;
+        }
+    }
 
 	/* (OPTIONAL) Check STATUS register for faults */
 }

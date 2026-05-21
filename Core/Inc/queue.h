@@ -21,6 +21,8 @@ typedef struct {
     int rear;   // 队尾索引
     int size;   // 队列当前大小
     int capacity; // 队列容量
+    uint32_t overrun_count;  // 入队满时溢出计数器
+    uint32_t underrun_count; // 出队空时欠载计数器
 } Queue;
 
 

@@ -73,6 +73,7 @@ int test_flag = 0;
 Queue *queues[5]; // 每个芯片�???????????个队�???????????
 
 static uint8_t dma_tx_buffer[transm_data_len];  // DMA persistent send buffer
+static uint8_t spi_null_tx[27] = {0};          // Zero TX buffer for safe ADC reads (NULL command)
 
 ChipSelectConfig csConfig[4] = {
     {CS1_GPIO_Port, CS1_Pin},
@@ -88,12 +89,30 @@ volatile uint8_t uart_tx_busy = 0;     // UART DMA传输忙标志位
 int tx_queue_index = 0;                // 当前发送的队列索引
 static uint32_t drdy_watchdog = 0;     // DRDY超时计数器，用于EXTI丢失时的GPIO备份检测
 
+/* Per-ADC runtime diagnostic counters */
+typedef struct {
+    uint32_t frames_total;
+    uint32_t frames_ff_header;
+    uint32_t frames_zeroed;
+    uint32_t status_ff_count;
+    uint32_t rx_all_zero_count;
+    uint32_t rx_all_ff_count;
+    uint8_t  last_status[3];
+    uint8_t  last_rx_first6[6];
+} AdcDiagRuntime;
+
+static AdcDiagRuntime adc_rt[4];
+static uint32_t drdy_cycle_count = 0;
+static uint32_t last_diag_cycle_printed = 0;
+static uint8_t  diag_printed_once = 0;
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-
+static void print_diag_to_usart2(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -169,10 +188,15 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-		  // 轮询检查DRDY标志位
-	  if (data_ready_flag == 1 || HAL_GPIO_ReadPin(DRDY_GPIO_Port, DRDY_Pin) == GPIO_PIN_RESET)
+	  // =====================================================
+	  // DRDY 检测: 纯 EXTI 驱动 + 50ms 看门狗备份
+	  // DRDY 电平模式下 GPIO 轮询作为 OR 条件会导致紧循环
+	  // 改为仅响应 EXTI 中断标志，看门狗作为备份
+	  // =====================================================
+	  if (data_ready_flag == 1)
 	  {
-		  data_ready_flag = 0;  // 清除标志位
+		  data_ready_flag = 0;   // 清除 EXTI 标志位
+		  drdy_watchdog = 0;     // 重置看门狗
 
 		  // 依次读取4个ADC芯片的数据
 		  for (int i = 0; i < 4; i++)
@@ -181,12 +205,38 @@ int main(void)
 			  HAL_GPIO_WritePin(csConfig[i].GPIO_Port, csConfig[i].GPIO_Pin, GPIO_PIN_RESET);
 
 			  // 读取27字节数据（3字节状态字 + 24字节通道数据）
-			  HAL_SPI_Receive(&hspi2, receiveData[i], 27, 100);
+			  HAL_SPI_TransmitReceive(&hspi2, spi_null_tx, receiveData[i], 27, 100);  // send NULL cmd, safer than HAL_SPI_Receive
+              // Runtime diagnostics: track status and anomalies
+              adc_rt[i].frames_total++;
+              adc_rt[i].last_status[0] = receiveData[i][0];
+              adc_rt[i].last_status[1] = receiveData[i][1];
+              adc_rt[i].last_status[2] = receiveData[i][2];
 
 			  // 检查数据有效性
 			  if (receiveData[i][0] == 0xFF)
 			  {
+              adc_rt[i].frames_ff_header++;
 				  memset(receiveData[i], 0, 27);
+              adc_rt[i].frames_zeroed++;
+			  }
+
+			  /* Extended runtime diag: classify frame anomalies */
+			  {
+				  int ff_in_status = 0;
+				  if (receiveData[i][0] == 0xFF) ff_in_status++;
+				  if (receiveData[i][1] == 0xFF) ff_in_status++;
+				  if (receiveData[i][2] == 0xFF) ff_in_status++;
+				  if (ff_in_status >= 2) adc_rt[i].status_ff_count++;
+
+				  memcpy(adc_rt[i].last_rx_first6, receiveData[i], 6);
+
+				  int all_zero = 1, all_ff = 1;
+				  for (int j = 0; j < 27; j++) {
+					  if (receiveData[i][j] != 0x00) all_zero = 0;
+					  if (receiveData[i][j] != 0xFF) all_ff   = 0;
+				  }
+				  if (all_zero) adc_rt[i].rx_all_zero_count++;
+				  if (all_ff)   adc_rt[i].rx_all_ff_count++;
 			  }
 
 			  // 拉高CS片选，禁用当前ADC芯片
@@ -206,6 +256,86 @@ int main(void)
 			  cnt++;
 			  if(cnt % 1000 == 0)
 				  HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+		  }
+		  drdy_cycle_count++;
+	  }
+	  else
+	  {
+		  // EXTI 看门狗: 约 50ms 无 DRDY 中断时，通过 GPIO 电平备份检测
+		  // 主循环极快 (每圈 ~µs 级)，5000000 次迭代 ≈ 50ms
+		  if (++drdy_watchdog > 5000000)
+		  {
+			  drdy_watchdog = 0;
+			  if (HAL_GPIO_ReadPin(DRDY_GPIO_Port, DRDY_Pin) == GPIO_PIN_RESET)
+			  {
+				  // GPIO 电平备份读取 (EXTI 丢失时的恢复机制)
+				  for (int i = 0; i < 4; i++)
+				  {
+					  HAL_GPIO_WritePin(csConfig[i].GPIO_Port, csConfig[i].GPIO_Pin, GPIO_PIN_RESET);
+					  HAL_SPI_TransmitReceive(&hspi2, spi_null_tx, receiveData[i], 27, 100);  // send NULL cmd, safer than HAL_SPI_Receive
+              // Runtime diagnostics (watchdog path)
+              adc_rt[i].frames_total++;
+              adc_rt[i].last_status[0] = receiveData[i][0];
+              adc_rt[i].last_status[1] = receiveData[i][1];
+              adc_rt[i].last_status[2] = receiveData[i][2];
+
+					  if (receiveData[i][0] == 0xFF)
+					  {
+              adc_rt[i].frames_ff_header++;
+						  memset(receiveData[i], 0, 27);
+              adc_rt[i].frames_zeroed++;
+					  }
+
+					  /* Extended runtime diag (watchdog path) */
+					  {
+						  int ff_in_status = 0;
+						  if (receiveData[i][0] == 0xFF) ff_in_status++;
+						  if (receiveData[i][1] == 0xFF) ff_in_status++;
+						  if (receiveData[i][2] == 0xFF) ff_in_status++;
+						  if (ff_in_status >= 2) adc_rt[i].status_ff_count++;
+
+						  memcpy(adc_rt[i].last_rx_first6, receiveData[i], 6);
+
+						  int all_zero = 1, all_ff = 1;
+						  for (int j = 0; j < 27; j++) {
+							  if (receiveData[i][j] != 0x00) all_zero = 0;
+							  if (receiveData[i][j] != 0xFF) all_ff   = 0;
+						  }
+						  if (all_zero) adc_rt[i].rx_all_zero_count++;
+						  if (all_ff)   adc_rt[i].rx_all_ff_count++;
+					  }
+
+					  HAL_GPIO_WritePin(csConfig[i].GPIO_Port, csConfig[i].GPIO_Pin, GPIO_PIN_SET);
+
+					  transmitData[i][0] = 0xAA;
+					  transmitData[i][1] = 0xAA;
+					  transmitData[i][2] = i;
+					  memcpy(&transmitData[i][3], &receiveData[i][3], 24);
+					  transmitData[i][27] = 0xFF;
+					  transmitData[i][28] = 0xFF;
+
+					  enqueue(queues[i], transmitData[i]);
+
+					  cnt++;
+					  if(cnt % 1000 == 0)
+						  HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+				  }
+				  drdy_cycle_count++;
+			  }
+		  }
+	  }
+
+	  // Debug diag print via USART2: once at startup, then every 2000 DRDY cycles
+	  {
+		  int need_first_print = !diag_printed_once;
+		  int need_cycle_print = (drdy_cycle_count > 0 &&
+		                         drdy_cycle_count != last_diag_cycle_printed &&
+		                         drdy_cycle_count % 2000 == 0);
+		  if (need_first_print || need_cycle_print)
+		  {
+			  diag_printed_once = 1;
+			  last_diag_cycle_printed = drdy_cycle_count;
+			  print_diag_to_usart2();
 		  }
 	  }
 
@@ -280,6 +410,54 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+static void print_diag_to_usart2(void)
+{
+    char buf[200];
+    int len;
+    static const char eol[] = {0x0D, 0x0A, 0x00};
+
+    len = snprintf(buf, sizeof(buf), "--- ADC Diag [cyc %lu] ---%s", (unsigned long)drdy_cycle_count, eol);
+    HAL_UART_Transmit(&huart2, (uint8_t*)buf, len, 100);
+
+    for (int chip = 0; chip < 4; chip++)
+    {
+        /* Line 1: init status with sub-flags + register readback values */
+        len = snprintf(buf, sizeof(buf),
+            "C%d: init=%s(id=%d clk=%d mod=%d) id=0x%04X clk=0x%04X mod=0x%04X%s",
+            chip,
+            adc_diag[chip].init_ok ? "OK" : "FAIL",
+            (int)adc_diag[chip].id_ok, (int)adc_diag[chip].clock_ok, (int)adc_diag[chip].mode_ok,
+            (unsigned int)adc_diag[chip].id_read,
+            (unsigned int)adc_diag[chip].clock_read,
+            (unsigned int)adc_diag[chip].mode_read,
+            eol);
+        HAL_UART_Transmit(&huart2, (uint8_t*)buf, len, 100);
+
+        /* Line 2: runtime counters + status + first6 + overrun */
+        len = snprintf(buf, sizeof(buf),
+            "    total=%lu ff=%lu zero=%lu | stFF=%lu all0=%lu allFF=%lu | st=%02X%02X%02X rx=%02X%02X%02X%02X%02X%02X | ovr=%lu%s",
+            (unsigned long)adc_rt[chip].frames_total,
+            (unsigned long)adc_rt[chip].frames_ff_header,
+            (unsigned long)adc_rt[chip].frames_zeroed,
+            (unsigned long)adc_rt[chip].status_ff_count,
+            (unsigned long)adc_rt[chip].rx_all_zero_count,
+            (unsigned long)adc_rt[chip].rx_all_ff_count,
+            (unsigned int)adc_rt[chip].last_status[0],
+            (unsigned int)adc_rt[chip].last_status[1],
+            (unsigned int)adc_rt[chip].last_status[2],
+            (unsigned int)adc_rt[chip].last_rx_first6[0],
+            (unsigned int)adc_rt[chip].last_rx_first6[1],
+            (unsigned int)adc_rt[chip].last_rx_first6[2],
+            (unsigned int)adc_rt[chip].last_rx_first6[3],
+            (unsigned int)adc_rt[chip].last_rx_first6[4],
+            (unsigned int)adc_rt[chip].last_rx_first6[5],
+            (unsigned long)queues[chip]->overrun_count,
+            eol);
+        HAL_UART_Transmit(&huart2, (uint8_t*)buf, len, 100);
+    }
+}
+
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     // �???????????查触发中断的是否是TIM2
     if (htim->Instance == TIM2)

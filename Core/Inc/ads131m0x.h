@@ -1685,4 +1685,22 @@ int32_t     signExtend(const uint8_t dataBytes[]);
 
 
 
+//****************************************************************************
+//
+// ADC startup diagnostic structure (per-chip readback verification)
+//
+//****************************************************************************
+typedef struct
+{
+    uint16_t id_read;
+    uint16_t clock_read;
+    uint16_t mode_read;
+    uint8_t  init_ok;
+    uint8_t  id_ok;
+    uint8_t  clock_ok;
+    uint8_t  mode_ok;
+} AdcDiagInit;
+
+extern AdcDiagInit adc_diag[4];
+
 #endif /* ADS131M0X_H_ */

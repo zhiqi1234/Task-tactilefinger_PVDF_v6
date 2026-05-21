@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "queue.h"
 
@@ -19,6 +20,8 @@ Queue* createQueue(int capacity) {
     queue->front = 0;
     queue->rear = -1;
     queue->size = 0;
+    queue->overrun_count = 0;
+    queue->underrun_count = 0;
     queue->elements = (QueueElement*) malloc(capacity * sizeof(QueueElement));
     return queue;
 }
@@ -36,13 +39,10 @@ int isFull(Queue *queue) {
 // 入队操作
 void enqueue(Queue *queue, uint8_t data[transm_data_len]) {
     if (isFull(queue)) {
-//        printf("Queue is full, cannot enqueue.\n");
+        queue->overrun_count++;  // 记录溢出次数
         return;
     }
     queue->rear = (queue->rear + 1) % queue->capacity;
-//    for (int i = 0; i < transm_data_len; ++i) {
-//        queue->elements[queue->rear].data[i] = data[i];
-//    }
     memcpy(queue->elements[queue->rear].data, data, transm_data_len);
     queue->size++;
 }
@@ -51,8 +51,9 @@ void enqueue(Queue *queue, uint8_t data[transm_data_len]) {
 QueueElement dequeue(Queue *queue) {
     QueueElement item;
     if (isEmpty(queue)) {
-//        printf("Queue is empty, cannot dequeue.\n");
-        return item; // 返回空元素
+        queue->underrun_count++;  // 记录欠载次数
+        memset(&item, 0, sizeof(QueueElement));
+        return item; // 返回零初始化元素
     }
     item = queue->elements[queue->front];
     queue->front = (queue->front + 1) % queue->capacity;
