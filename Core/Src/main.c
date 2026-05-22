@@ -65,8 +65,6 @@ extern DMA_HandleTypeDef hdma_spi2_rx;
 
 // all 4 ADC chip
 uint8_t receiveData[4][27];  // 每个芯片27字节的数据缓冲区（3字节状态字 + 24字节通道数据）
-uint8_t transmitData[4][transm_data_len]; // 每个芯片�???????????�???????????28字节的发送数据缓冲区+1个字节标签位
-uint8_t transmitData_mix[1][transm_data_len]; // 每个芯片�???????????�???????????28字节的发送数据缓冲区+1个字节标签位
 int currentChip = 0; // 当前处理的芯片索�???????????
 int cnt = 0;
 int test_flag = 0;
@@ -93,10 +91,12 @@ static uint32_t drdy_watchdog = 0;     // DRDY超时计数器，用于EXTI丢失
 typedef struct {
     uint32_t frames_total;
     uint32_t frames_ff_header;
-    uint32_t frames_zeroed;
     uint32_t status_ff_count;
     uint32_t rx_all_zero_count;
     uint32_t rx_all_ff_count;
+    uint32_t frames_valid;
+    uint32_t frames_invalid;
+    uint32_t spi_error_count;
     uint8_t  last_status[3];
     uint8_t  last_rx_first6[6];
 } AdcDiagRuntime;
@@ -113,6 +113,7 @@ static uint8_t  diag_printed_once = 0;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static void print_diag_to_usart2(void);
+static void read_all_adcs_and_enqueue_ch4_mix(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -198,65 +199,7 @@ int main(void)
 		  data_ready_flag = 0;   // 清除 EXTI 标志位
 		  drdy_watchdog = 0;     // 重置看门狗
 
-		  // 依次读取4个ADC芯片的数据
-		  for (int i = 0; i < 4; i++)
-		  {
-			  // 拉低CS片选，使能当前ADC芯片
-			  HAL_GPIO_WritePin(csConfig[i].GPIO_Port, csConfig[i].GPIO_Pin, GPIO_PIN_RESET);
-
-			  // 读取27字节数据（3字节状态字 + 24字节通道数据）
-			  HAL_SPI_TransmitReceive(&hspi2, spi_null_tx, receiveData[i], 27, 100);  // send NULL cmd, safer than HAL_SPI_Receive
-              // Runtime diagnostics: track status and anomalies
-              adc_rt[i].frames_total++;
-              adc_rt[i].last_status[0] = receiveData[i][0];
-              adc_rt[i].last_status[1] = receiveData[i][1];
-              adc_rt[i].last_status[2] = receiveData[i][2];
-
-			  // 检查数据有效性
-			  if (receiveData[i][0] == 0xFF)
-			  {
-              adc_rt[i].frames_ff_header++;
-				  memset(receiveData[i], 0, 27);
-              adc_rt[i].frames_zeroed++;
-			  }
-
-			  /* Extended runtime diag: classify frame anomalies */
-			  {
-				  int ff_in_status = 0;
-				  if (receiveData[i][0] == 0xFF) ff_in_status++;
-				  if (receiveData[i][1] == 0xFF) ff_in_status++;
-				  if (receiveData[i][2] == 0xFF) ff_in_status++;
-				  if (ff_in_status >= 2) adc_rt[i].status_ff_count++;
-
-				  memcpy(adc_rt[i].last_rx_first6, receiveData[i], 6);
-
-				  int all_zero = 1, all_ff = 1;
-				  for (int j = 0; j < 27; j++) {
-					  if (receiveData[i][j] != 0x00) all_zero = 0;
-					  if (receiveData[i][j] != 0xFF) all_ff   = 0;
-				  }
-				  if (all_zero) adc_rt[i].rx_all_zero_count++;
-				  if (all_ff)   adc_rt[i].rx_all_ff_count++;
-			  }
-
-			  // 拉高CS片选，禁用当前ADC芯片
-			  HAL_GPIO_WritePin(csConfig[i].GPIO_Port, csConfig[i].GPIO_Pin, GPIO_PIN_SET);
-
-			  // 组装发送数据帧（29字节全通道）
-			  transmitData[i][0] = 0xAA;
-			  transmitData[i][1] = 0xAA;
-			  transmitData[i][2] = i;
-			  memcpy(&transmitData[i][3], &receiveData[i][3], 24);
-			  transmitData[i][27] = 0xFF;
-			  transmitData[i][28] = 0xFF;
-
-			  // 入队
-			  enqueue(queues[i], transmitData[i]);
-
-			  cnt++;
-			  if(cnt % 1000 == 0)
-				  HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-		  }
+		  read_all_adcs_and_enqueue_ch4_mix();
 		  drdy_cycle_count++;
 	  }
 	  else
@@ -269,57 +212,7 @@ int main(void)
 			  if (HAL_GPIO_ReadPin(DRDY_GPIO_Port, DRDY_Pin) == GPIO_PIN_RESET)
 			  {
 				  // GPIO 电平备份读取 (EXTI 丢失时的恢复机制)
-				  for (int i = 0; i < 4; i++)
-				  {
-					  HAL_GPIO_WritePin(csConfig[i].GPIO_Port, csConfig[i].GPIO_Pin, GPIO_PIN_RESET);
-					  HAL_SPI_TransmitReceive(&hspi2, spi_null_tx, receiveData[i], 27, 100);  // send NULL cmd, safer than HAL_SPI_Receive
-              // Runtime diagnostics (watchdog path)
-              adc_rt[i].frames_total++;
-              adc_rt[i].last_status[0] = receiveData[i][0];
-              adc_rt[i].last_status[1] = receiveData[i][1];
-              adc_rt[i].last_status[2] = receiveData[i][2];
-
-					  if (receiveData[i][0] == 0xFF)
-					  {
-              adc_rt[i].frames_ff_header++;
-						  memset(receiveData[i], 0, 27);
-              adc_rt[i].frames_zeroed++;
-					  }
-
-					  /* Extended runtime diag (watchdog path) */
-					  {
-						  int ff_in_status = 0;
-						  if (receiveData[i][0] == 0xFF) ff_in_status++;
-						  if (receiveData[i][1] == 0xFF) ff_in_status++;
-						  if (receiveData[i][2] == 0xFF) ff_in_status++;
-						  if (ff_in_status >= 2) adc_rt[i].status_ff_count++;
-
-						  memcpy(adc_rt[i].last_rx_first6, receiveData[i], 6);
-
-						  int all_zero = 1, all_ff = 1;
-						  for (int j = 0; j < 27; j++) {
-							  if (receiveData[i][j] != 0x00) all_zero = 0;
-							  if (receiveData[i][j] != 0xFF) all_ff   = 0;
-						  }
-						  if (all_zero) adc_rt[i].rx_all_zero_count++;
-						  if (all_ff)   adc_rt[i].rx_all_ff_count++;
-					  }
-
-					  HAL_GPIO_WritePin(csConfig[i].GPIO_Port, csConfig[i].GPIO_Pin, GPIO_PIN_SET);
-
-					  transmitData[i][0] = 0xAA;
-					  transmitData[i][1] = 0xAA;
-					  transmitData[i][2] = i;
-					  memcpy(&transmitData[i][3], &receiveData[i][3], 24);
-					  transmitData[i][27] = 0xFF;
-					  transmitData[i][28] = 0xFF;
-
-					  enqueue(queues[i], transmitData[i]);
-
-					  cnt++;
-					  if(cnt % 1000 == 0)
-						  HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-				  }
+				  read_all_adcs_and_enqueue_ch4_mix();
 				  drdy_cycle_count++;
 			  }
 		  }
@@ -339,20 +232,17 @@ int main(void)
 		  }
 	  }
 
-	  // 发送队列中的数据（每次只发一个，等DMA完成后再发下一个）
+	  // 发送混合队列中的数据
 	  if (!uart_tx_busy)
 	  {
-		  for (int i = 0; i < 4; i++)
+		  if (!isEmpty(queues[4]))
 		  {
-			  int idx = (tx_queue_index + i) % 4;
-			  if (!isEmpty(queues[idx]))
+			  QueueElement item = dequeue(queues[4]);
+			  memcpy(dma_tx_buffer, item.data, transm_data_len);
+			  uart_tx_busy = 1;
+			  if (HAL_UART_Transmit_DMA(&huart4, dma_tx_buffer, transm_data_len) != HAL_OK)
 			  {
-				  QueueElement item = dequeue(queues[idx]);
-				  memcpy(dma_tx_buffer, item.data, transm_data_len);
-				  uart_tx_busy = 1;
-				  tx_queue_index = (idx + 1) % 4;
-				  HAL_UART_Transmit_DMA(&huart4, dma_tx_buffer, transm_data_len);
-				  break;
+				  uart_tx_busy = 0;
 			  }
 		  }
 	  }
@@ -411,13 +301,102 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
+
+/*
+ * read_all_adcs_and_enqueue_ch4_mix:
+ *   SPI reads 4 ADCs (27 bytes each), classifies frames, extracts CH4,
+ *   filters invalid frames, and enqueues one 16-byte mixed frame to queues[4].
+ *   Only enqueues if at least one ADC chip is valid.
+ */
+static void read_all_adcs_and_enqueue_ch4_mix(void)
+{
+    uint8_t mixed[16];
+    int any_valid = 0;
+
+    mixed[0] = 0xAA;
+    mixed[1] = 0xAA;
+
+    for (int i = 0; i < 4; i++)
+    {
+        // CS low
+        HAL_GPIO_WritePin(csConfig[i].GPIO_Port, csConfig[i].GPIO_Pin, GPIO_PIN_RESET);
+
+        // Read 27-byte full frame (3 status + 24 channel data)
+        HAL_StatusTypeDef spi_ret = HAL_SPI_TransmitReceive(&hspi2, spi_null_tx, receiveData[i], 27, 100);
+
+        // CS high
+        HAL_GPIO_WritePin(csConfig[i].GPIO_Port, csConfig[i].GPIO_Pin, GPIO_PIN_SET);
+
+        adc_rt[i].frames_total++;
+
+        // Save raw status + first6 BEFORE any modification
+        adc_rt[i].last_status[0] = receiveData[i][0];
+        adc_rt[i].last_status[1] = receiveData[i][1];
+        adc_rt[i].last_status[2] = receiveData[i][2];
+        memcpy(adc_rt[i].last_rx_first6, receiveData[i], 6);
+
+        // ff_header tracking (on raw data)
+        if (receiveData[i][0] == 0xFF)
+            adc_rt[i].frames_ff_header++;
+
+        // Extended diag classification (ALL on raw data, before any modification)
+        int ff_in_status = 0;
+        if (receiveData[i][0] == 0xFF) ff_in_status++;
+        if (receiveData[i][1] == 0xFF) ff_in_status++;
+        if (receiveData[i][2] == 0xFF) ff_in_status++;
+        if (ff_in_status >= 2) adc_rt[i].status_ff_count++;
+
+        int all_zero = 1, all_ff = 1;
+        for (int j = 0; j < 27; j++) {
+            if (receiveData[i][j] != 0x00) all_zero = 0;
+            if (receiveData[i][j] != 0xFF) all_ff   = 0;
+        }
+        if (all_zero) adc_rt[i].rx_all_zero_count++;
+        if (all_ff)   adc_rt[i].rx_all_ff_count++;
+
+        // Validity check
+        int valid = 1;
+        if (spi_ret != HAL_OK) {
+            valid = 0;
+            adc_rt[i].spi_error_count++;
+        }
+        if (all_zero) valid = 0;
+        if (all_ff)   valid = 0;
+        if (ff_in_status >= 2) valid = 0;
+
+        // Extract CH4 (receiveData[i][12..14]) or zero-fill
+        if (valid) {
+            adc_rt[i].frames_valid++;
+            mixed[2 + i*3 + 0] = receiveData[i][12];
+            mixed[2 + i*3 + 1] = receiveData[i][13];
+            mixed[2 + i*3 + 2] = receiveData[i][14];
+            any_valid = 1;
+        } else {
+            adc_rt[i].frames_invalid++;
+            mixed[2 + i*3 + 0] = 0x00;
+            mixed[2 + i*3 + 1] = 0x00;
+            mixed[2 + i*3 + 2] = 0x00;
+        }
+
+        cnt++;
+        if (cnt % 1000 == 0)
+            HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    }
+
+    mixed[14] = 0xFF;
+    mixed[15] = 0xFF;
+
+    if (any_valid)
+        enqueue(queues[4], mixed);
+}
 static void print_diag_to_usart2(void)
 {
     char buf[200];
     int len;
     static const char eol[] = {0x0D, 0x0A, 0x00};
 
-    len = snprintf(buf, sizeof(buf), "--- ADC Diag [cyc %lu] ---%s", (unsigned long)drdy_cycle_count, eol);
+    len = snprintf(buf, sizeof(buf), "--- ADC Diag [cyc %lu] mix_ovr=%lu ---%s",
+        (unsigned long)drdy_cycle_count, (unsigned long)queues[4]->overrun_count, eol);
     HAL_UART_Transmit(&huart2, (uint8_t*)buf, len, 100);
 
     for (int chip = 0; chip < 4; chip++)
@@ -434,15 +413,17 @@ static void print_diag_to_usart2(void)
             eol);
         HAL_UART_Transmit(&huart2, (uint8_t*)buf, len, 100);
 
-        /* Line 2: runtime counters + status + first6 + overrun */
+        /* Line 2: runtime counters + status + first6 + valid/invalid/spi_err */
         len = snprintf(buf, sizeof(buf),
-            "    total=%lu ff=%lu zero=%lu | stFF=%lu all0=%lu allFF=%lu | st=%02X%02X%02X rx=%02X%02X%02X%02X%02X%02X | ovr=%lu%s",
+            "    total=%lu ff=%lu | stFF=%lu all0=%lu allFF=%lu | v=%lu iv=%lu spiE=%lu | st=%02X%02X%02X rx=%02X%02X%02X%02X%02X%02X%s",
             (unsigned long)adc_rt[chip].frames_total,
             (unsigned long)adc_rt[chip].frames_ff_header,
-            (unsigned long)adc_rt[chip].frames_zeroed,
             (unsigned long)adc_rt[chip].status_ff_count,
             (unsigned long)adc_rt[chip].rx_all_zero_count,
             (unsigned long)adc_rt[chip].rx_all_ff_count,
+            (unsigned long)adc_rt[chip].frames_valid,
+            (unsigned long)adc_rt[chip].frames_invalid,
+            (unsigned long)adc_rt[chip].spi_error_count,
             (unsigned int)adc_rt[chip].last_status[0],
             (unsigned int)adc_rt[chip].last_status[1],
             (unsigned int)adc_rt[chip].last_status[2],
@@ -452,7 +433,6 @@ static void print_diag_to_usart2(void)
             (unsigned int)adc_rt[chip].last_rx_first6[3],
             (unsigned int)adc_rt[chip].last_rx_first6[4],
             (unsigned int)adc_rt[chip].last_rx_first6[5],
-            (unsigned long)queues[chip]->overrun_count,
             eol);
         HAL_UART_Transmit(&huart2, (uint8_t*)buf, len, 100);
     }

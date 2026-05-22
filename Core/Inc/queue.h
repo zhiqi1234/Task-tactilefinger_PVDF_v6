@@ -7,7 +7,7 @@
 
 #ifndef INC_QUEUE_H_
 #define INC_QUEUE_H_
-#define transm_data_len 29
+#define transm_data_len 16
 
 // 定义队列元素的结构体
 typedef struct {
