@@ -87,6 +87,9 @@ volatile uint8_t uart_tx_busy = 0;     // UART DMA传输忙标志位
 int tx_queue_index = 0;                // 当前发送的队列索引
 static uint32_t drdy_watchdog = 0;     // DRDY超时计数器，用于EXTI丢失时的GPIO备份检测
 
+static uint32_t last_drdy_level_read_ms = 0;
+static const uint32_t drdy_level_poll_interval_ms = 1;
+
 /* Per-ADC runtime diagnostic counters */
 typedef struct {
     uint32_t frames_total;
@@ -199,11 +202,25 @@ int main(void)
 		  data_ready_flag = 0;   // 清除 EXTI 标志位
 		  drdy_watchdog = 0;     // 重置看门狗
 
+		  last_drdy_level_read_ms = HAL_GetTick();
+
 		  read_all_adcs_and_enqueue_ch4_mix();
 		  drdy_cycle_count++;
 	  }
 	  else
 	  {
+		  uint32_t now_ms = HAL_GetTick();
+
+		  if (HAL_GPIO_ReadPin(DRDY_GPIO_Port, DRDY_Pin) == GPIO_PIN_RESET &&
+		      (uint32_t)(now_ms - last_drdy_level_read_ms) >= drdy_level_poll_interval_ms)
+		  {
+			  last_drdy_level_read_ms = now_ms;
+			  drdy_watchdog = 0;
+			  read_all_adcs_and_enqueue_ch4_mix();
+			  drdy_cycle_count++;
+		  }
+		  else
+		  {
 		  // EXTI 看门狗: 约 50ms 无 DRDY 中断时，通过 GPIO 电平备份检测
 		  // 主循环极快 (每圈 ~µs 级)，5000000 次迭代 ≈ 50ms
 		  if (++drdy_watchdog > 5000000)
@@ -215,6 +232,7 @@ int main(void)
 				  read_all_adcs_and_enqueue_ch4_mix();
 				  drdy_cycle_count++;
 			  }
+		  }
 		  }
 	  }
 

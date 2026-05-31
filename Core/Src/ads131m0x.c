@@ -142,6 +142,7 @@ void adcStartup(void)
     /* Readback verification: confirm ID/CLOCK/MODE for each chip */
     {
         uint16_t expected_clock = (CLOCK_DEFAULT & ~CLOCK_OSR_MASK) | CLOCK_OSR_16384;
+        uint16_t expected_mode = enforce_selected_device_modes(MODE_DEFAULT);
         for (int chip = 0; chip < 4; chip++)
         {
             selectChip(chip);
@@ -154,7 +155,7 @@ void adcStartup(void)
                                     adc_diag[chip].id_read != 0xFFFF &&
                                     (adc_diag[chip].id_read & 0xF000) == 0x2000) ? 1 : 0;
             adc_diag[chip].clock_ok = (adc_diag[chip].clock_read == expected_clock) ? 1 : 0;
-            adc_diag[chip].mode_ok  = (adc_diag[chip].mode_read == MODE_DEFAULT) ? 1 : 0;
+            adc_diag[chip].mode_ok  = (adc_diag[chip].mode_read == expected_mode) ? 1 : 0;
             adc_diag[chip].init_ok = (adc_diag[chip].id_ok &&
                                       adc_diag[chip].clock_ok &&
                                       adc_diag[chip].mode_ok) ? 1 : 0;
@@ -1024,6 +1025,14 @@ uint16_t enforce_selected_device_modes(uint16_t data)
     // When writing to the MODE register, ensure DRDY_FMT bit is NEVER set
     data = (data & ~MODE_DRDY_FMT_MASK) | MODE_DRDY_FMT_LOGIC_LOW;
 #endif
+
+    ///////////////////////////////////////////////////////////////////////////
+    // Enforce shared-DRDY safe state
+    //
+    // The MCU board ties multiple ADS131 DRDY pins together. Configure DRDY
+    // high level as high-impedance so the shared line can be pulled up by MCU
+    // GPIO/hardware pull-up and pulled low by any ready ADC.
+    data = (data & ~MODE_DRDY_HiZ_MASK) | MODE_DRDY_HiZ_HIGH_IMPEDANCE;
 
 
     ///////////////////////////////////////////////////////////////////////////
